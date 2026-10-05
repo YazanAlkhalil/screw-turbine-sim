@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Screw Turbine Loop</title>
+  </head>
+  <body>
+    <div id="app">
+      <main id="viewport">
+        <div id="scene"></div>
+        <div class="hud hud-top">
+          <div class="title-card">
+            <h1>Screw-turbine closed loop</h1>
+            <p>Physics simulation of the design in <code>8A.jpg</code>. Nothing is scripted: water moves only where pressure and gravity push it.</p>
+          </div>
+        </div>
+        <div class="hud hud-bottom">
+          <div class="transport">
+            <button id="btn-play" class="primary" aria-pressed="true">Pause</button>
+            <button id="btn-reset">Reset</button>
+            <button id="btn-windup" title="Lift the weight and pour the water back up by hand. The work this takes is booked in the energy ledger.">Wind it back up</button>
+            <label>Speed
+              <select id="speed">
+                <option value="0.25">0.25×</option>
+                <option value="0.5">0.5×</option>
+                <option value="1" selected>1×</option>
+                <option value="2">2×</option>
+                <option value="5">5×</option>
+                <option value="10">10×</option>
+                <option value="20">20×</option>
+              </select>
+            </label>
+            <label class="check"><input type="checkbox" id="labels" checked /> Labels</label>
+            <span id="time">t = 0.0 s</span>
+          </div>
+        </div>
+      </main>
+
+      <aside id="panel">
+        <section id="status" class="card status" data-state="running" aria-live="polite">
+          <div class="status-head"><span class="status-icon" aria-hidden="true"></span><span id="status-title">Starting</span></div>
+          <p id="status-text"></p>
+          <p id="notes" class="notes" hidden></p>
+        </section>
+
+        <section class="card">
+          <h2>Live readings</h2>
+          <div class="tiles">
+            <div class="tile"><div class="tile-label">Turbine flow</div><div class="tile-value"><span id="v-flow-t">0</span><small>L/min</small></div></div>
+            <div class="tile"><div class="tile-label">Return flow</div><div class="tile-value"><span id="v-flow-r">0</span><small>L/min</small></div></div>
+            <div class="tile"><div class="tile-label">Turbine speed</div><div class="tile-value"><span id="v-rpm">0</span><small>rpm</small></div></div>
+            <div class="tile"><div class="tile-label">Electrical power</div><div class="tile-value"><span id="v-power">0</span><small>W</small></div></div>
+            <div class="tile"><div class="tile-label">Big vessel air</div><div class="tile-value"><span id="v-air">0</span><small id="u-air">kPa</small></div></div>
+            <div class="tile"><div class="tile-label">Water under the weight</div><div class="tile-value"><span id="v-weight">0</span><small>L</small></div></div>
+          </div>
+          <div class="push">
+            <h3>Can the weight lift the water over the top?</h3>
+            <div class="push-bar" aria-hidden="true"><div id="push-avail"></div><div id="push-need"></div></div>
+            <p id="push-text"></p>
+          </div>
+        </section>
+
+        <section class="card">
+          <h2>Energy ledger</h2>
+          <dl class="ledger">
+            <div><dt>Put in from outside</dt><dd id="e-input">0 J</dd></div>
+            <div><dt>Released from storage <small>(sinking weight, falling water, trapped air)</small></dt><dd id="e-released">0 J</dd></div>
+          </dl>
+          <div id="ledger-bar" class="stack empty" aria-hidden="true"><div id="bar-generated"></div><div id="bar-lost"></div></div>
+          <div class="stack-legend">
+            <div><i class="sw gen"></i><span>Became electricity</span><b id="e-generated">0 J</b><span id="e-generated-pct" class="pct"></span></div>
+            <div><i class="sw lost"></i><span>Lost as heat &amp; splashing</span><b id="e-lost">0 J</b><span id="e-lost-pct" class="pct"></span></div>
+          </div>
+          <details class="losses"><summary>Where the losses went</summary><ul id="loss-list" class="loss-list"></ul></details>
+          <p id="e-net" class="net" hidden></p>
+          <p id="e-check" class="muted small"></p>
+        </section>
+
+        <section class="card charts">
+          <div id="chart-flow"></div>
+          <div id="chart-power"></div>
+          <div id="chart-energy"></div>
+        </section>
+
+        <section class="card">
+          <h2>Parameters</h2>
+          <div id="params"></div>
+        </section>
+
+        <section class="card">
+          <details class="model">
+            <summary>How the model works</summary>
+            <ul>
+              <li>Each pipe is a column of water following the unsteady Bernoulli equation: pressure, gravity, the water's inertia, and pipe friction.</li>
+              <li>The screw turbine carries a fixed volume of water per turn, plus some leakage past the blades. The pressure drop across it is what turns the shaft.</li>
+              <li>The generator brakes the shaft with a torque proportional to speed. The braking power is the electricity.</li>
+              <li>The weight is a sealed piston. It adds its weight ÷ area to the pressure of the water underneath. Water that lands on top of it adds to that weight.</li>
+              <li>A sealed big vessel traps air that obeys Boyle's law (pressure × volume stays constant). When its pressure drops below the outside air, that is the "partial vacuum" from the docs.</li>
+              <li>The one-way valves open above their opening pressure and shut as soon as flow tries to reverse.</li>
+              <li>Water falling from the spout, and over the top of the return pipe, loses the energy of its fall when it splashes.</li>
+              <li>The air-release tube is drawn as a pressure gauge: its water level shows the pressure at the turbine inlet. It empties when that pressure falls below the outside air.</li>
+              <li>Pipes are assumed to stay full, with no air leaking in. That is the most favourable assumption for the design.</li>
+              <li>Every loss is calculated directly from the flows, never as a leftover. That makes "electricity + losses = released energy" an independent check on the arithmetic.</li>
+            </ul>
+          </details>
+        </section>
+      </aside>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
