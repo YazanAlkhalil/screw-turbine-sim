@@ -44,14 +44,16 @@ export function computeLayout(p) {
 }
 
 function screwLayout(p, c) {
-  const { RL, RB, rT, xL, yF, yLtop } = c;
-  // Screw turbine: horizontal axis just above the lower tank's rim.
-  const yT = yLtop + 0.1;
+  const { RL, RB, rT, xL, yF, yLtop, tP } = c;
+  // Screw turbine: horizontal axis level with the lower tank's rim, beside the tank.
+  // Its outlet elbows down into the tank's side wall just under the rim (as in 8A.jpg).
+  const yT = yLtop + 0.04;
   const rH = HOUSING_RADIUS;
-  const xs = xL + RL * 0.5; // spout x, off-centre so it clears the riser
-  const xT0 = xs + 0.045; // housing left end (outlet)
+  const xWall = xL + RL; // the tank's right-hand wall
+  const xT0 = xWall + 0.1; // housing left end (outlet)
   const xT1 = xT0 + HOUSING_LENGTH; // housing right end (inlet + gears)
-  const zOut = yLtop + 0.03; // spout outlet height (free fall into the tank)
+  const zOut = yLtop - 0.05 - rT; // side inlet height ("onto": water enters above the weight)
+  const zSub = yF + 0.022; // side inlet height ("under": below the weight's stop ring)
 
   // Feed enters the right end cap from the side, above the shaft (as in 8A.jpg):
   // the pipe drops from the vessel and elbows straight into the end of the housing.
@@ -71,7 +73,7 @@ function screwLayout(p, c) {
   const genX1 = xT1 + 0.25;
   return {
     ...c,
-    yT, rH, xT0, xT1, xs, zOut, housingLength: HOUSING_LENGTH, inOff,
+    yT, rH, xWall, xT0, xT1, zOut, housingLength: HOUSING_LENGTH, inOff,
     xB, zBb, zBbMin,
     zPeak, xRin, zIn, intakeY,
     tapX: xT0 + 0.1,
@@ -80,7 +82,10 @@ function screwLayout(p, c) {
     gearR1: 0.042, gearR2: 0.026, gearX,
     genY: yT - (0.042 + 0.026 + 0.004),
     genX0: xT1 + 0.125, genX1,
-    zSub: yF + 0.022, // submerged outlet height in "under" mode
+    zSub,
+    spoutX: xWall - 0.02, // where water entering through the side wall falls
+    // The weight must start below the side inlet, or the inlet would open under it.
+    maxDepth: p.discharge === 'under' ? p.ltHeight - tP - 0.03 : zOut - rT - 0.01 - yF - tP,
     valves: [{ x: xL, y: yLtop + 0.13 }],
     baseX0: xL - RL - 0.1,
     baseX1: Math.max(xB + RB, genX1 + 0.2) + 0.1,
@@ -94,15 +99,14 @@ function screwLayout(p, c) {
         p.discharge === 'under'
           ? [
               [xT0, yT, 0],
-              [xT0 - 0.04, yT, 0],
-              [xT0 - 0.04, yT, RL + 0.045],
-              [xT0 - 0.04, yF + 0.022, RL + 0.045],
-              [xT0 - 0.04, yF + 0.022, RL * 0.55],
+              [xWall + 0.04, yT, 0],
+              [xWall + 0.04, zSub, 0],
+              [xWall - 0.004, zSub, 0],
             ]
           : [
               [xT0, yT, 0],
-              [xs, yT, 0],
-              [xs, zOut, 0],
+              [xWall + 0.055, yT, 0],
+              [xWall - 0.004, zOut, 0],
             ],
       ret: [
         [xL, intakeY, 0],
@@ -143,6 +147,8 @@ function peltonLayout(p, c) {
   return {
     ...c,
     rPitch, Rc, casingDepth, casingBottom, xP, yA, zNozzle, yDrain, zOut,
+    spoutX: xL,
+    maxDepth: c.HL - c.tP - 0.03,
     nozzleTipX: xP + 0.3 * Rc,
     xB, zBb, zBbMin,
     zPeak, xR, intakeY,

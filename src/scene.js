@@ -724,7 +724,10 @@ export class ApparatusScene {
     // fittings
     this.collar([L.xT1 + 0.013, L.yT + L.inOff, 0], X_AXIS, L.rT);
     this.collar([L.xT0 - 0.012, L.yT, 0], X_AXIS, L.rT);
-    if (params.discharge !== 'under') this.collar(L.paths.turbineOut.at(-1), Y_AXIS, L.rT, 0.02);
+    // where the turbine's outlet passes through the tank's side wall
+    const out = L.paths.turbineOut;
+    const inDir = v3(out.at(-1)).sub(v3(out.at(-2))).normalize();
+    this.collar(v3(out.at(-1)).addScaledVector(inDir, -0.016).toArray(), inDir, L.rT, 0.02);
     this.collar([L.xRin, L.zBtop + 0.03, 0], Y_AXIS, L.rR);
     this.collar([L.xL, L.yLtop + 0.05, 0], Y_AXIS, L.rR);
 
@@ -746,7 +749,7 @@ export class ApparatusScene {
     this.label('Release bubble air', [L.tapX, L.tapY + L.ventLength + 0.07, 0]);
     this.label('One-way valve', [L.xL - L.rR - 0.04, L.valves[0].y, 0], 'left');
     this.label('Return pipe', [(L.xL + L.xRin) / 2, L.zPeak + 0.045, 0]);
-    if (params.discharge === 'under') this.label('Discharge under the weight', [L.xT0 - 0.04, L.yF + 0.08, L.RL + 0.06], 'right small');
+    if (params.discharge === 'under') this.label('Discharge under the weight', [L.xWall + 0.06, L.yF + 0.06, 0.04], 'right small');
   }
 
   // -------------------------------------------------------------------------------------
@@ -961,13 +964,12 @@ export class ApparatusScene {
       this.piezo.visible = r.piezoLevel > 0.001;
     }
 
-    // free-falling water
-    const last = L.paths.turbineOut.at(-1);
-    const spoutOn = r.onto && r.flowTurbine > 0.05;
+    // free-falling water (none once the inlet is under water)
+    const spoutOn = r.onto && r.flowTurbine > 0.05 && r.zLAs < L.zOut;
     this.jetSpout.visible = spoutOn;
     if (spoutOn) {
       const w = Math.min(1, Math.sqrt(r.flowTurbine / 8));
-      this.jetSpout.position.set(last[0], r.zLAs, 0);
+      this.jetSpout.position.set(L.spoutX, r.zLAs, 0);
       this.jetSpout.scale.set(0.35 + 0.65 * w, Math.max(MIN, L.zOut - r.zLAs), 0.35 + 0.65 * w);
     }
     const retOn = r.flowReturn > 0.05 && r.zBs < L.zIn;

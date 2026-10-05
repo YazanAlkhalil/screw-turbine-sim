@@ -76,7 +76,10 @@ export class Simulation {
     const L = this.layout;
     const p = this.params;
     const notes = [];
-    const depth = Math.min(Math.max(p.ltDepth, L.hStop + 0.005), L.HL - L.tP - 0.03);
+    const depth = Math.min(Math.max(p.ltDepth, L.hStop + 0.005), L.maxDepth);
+    if (depth < p.ltDepth - 1e-6) {
+      notes.push(`Initial water under the weight limited to ${depth.toFixed(2)} m so the weight starts below the turbine's inlet.`);
+    }
     let VLB = this.AL * depth;
     // All the water must fit in the lower tank, and everything above the stops must fit in the vessel.
     VLB = Math.min(VLB, 0.97 * this.capB + this.Vstop);
@@ -181,7 +184,10 @@ export class Simulation {
     } else {
       // ---- Screw: full pipe, implicitly coupled to the rotor ----------------------------
       // Positive-displacement machine with leakage: flow Q = d·ω + Gl·Δp ; torque = d·Δp
-      const DT = onto ? pA + RHO * G * (zBs - L.zOut) : pA + RHO * G * zBs - headLB;
+      // "Onto": the side inlet discharges above the weight. Once the water sitting on the
+      // weight rises above the inlet, the outlet is submerged and has to push against it.
+      const submerged = onto && zLAs > L.zOut;
+      const DT = onto ? pA + RHO * G * (zBs - Math.max(L.zOut, zLAs)) : pA + RHO * G * zBs - headLB;
       const RT = (RHO * (this.kTpipe + K_EXIT) * aQT) / ATT;
       const d = this.d;
       const Gl = this.Gl;
@@ -193,10 +199,13 @@ export class Simulation {
       const det = a11 * a22 - a12 * a12;
       QT = (b1 * a22 - a12 * b2) / det;
       w = (a11 * b2 - a12 * b1) / det;
-      // A free outfall can't run backwards; nothing can be drawn from an empty vessel;
-      // backflow can't take water the weight is already resting on its stops over.
+      // A free outfall can't run backwards (a submerged one can, until the pool on the
+      // weight drops to the inlet); nothing can be drawn from an empty vessel; backflow
+      // can't take water the weight is already resting on its stops over.
       const QTmax = s.VB / dt;
-      const QTmin = onto ? 0 : -Math.max(0, s.VLB - this.Vstop) / dt;
+      const QTmin = onto
+        ? submerged ? (-this.AL * (zLAs - L.zOut)) / dt : 0
+        : -Math.max(0, s.VLB - this.Vstop) / dt;
       if (QT > QTmax || QT < QTmin) {
         QT = Math.min(QTmax, Math.max(QTmin, QT));
         w = (b2 + (d * QT) / Gl) / a22;
@@ -229,7 +238,7 @@ export class Simulation {
     lg.splash +=
       ((RHO * K_EXIT * aQR) / ARR) * QR * QR * dt +
       RHO * G * (zLift - zBs) * QR * dt + // falls from the top of the return pipe into the vessel
-      (onto ? RHO * G * (fallFrom - zLAs) * QT * dt : 0); // falls from the turbine onto the weight
+      (onto ? RHO * G * Math.max(0, fallFrom - zLAs) * QT * dt : 0); // falls from the turbine onto the weight
     lg.transient += 0.5 * this.IT * (QT - s.QT) ** 2 + 0.5 * this.IR * (QR - s.QR) ** 2 + 0.5 * J * (w - s.w) ** 2;
 
     s.VB = Math.max(0, s.VB + (QR - QT) * dt);
