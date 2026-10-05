@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/make-offline.js",
     "preview": "vite preview",
     "test": "node test/physics.test.js",
     "deploy": "sh scripts/deploy.sh"

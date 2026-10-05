@@ -1,6 +1,6 @@
 // Side panel: status, live readings, energy ledger, charts and parameter controls.
 
-import { PARAM_GROUPS, PARAM_LIST, PRESETS } from './params.js';
+import { MACHINES, PARAM_GROUPS, PARAM_LIST, appliesTo, presetsFor } from './params.js';
 import { LineChart } from './chart.js';
 
 const COLOR = {
@@ -16,6 +16,7 @@ const LOSS_LABELS = {
   valves: 'One-way valves',
   pipe: 'Pipe friction & bends',
   leakage: 'Screw blade-gap leakage',
+  jet: 'Jet energy the buckets missed',
   seal: 'Weight seal friction',
   bearing: 'Bearings & gears',
   transient: 'Surges (valve slams)',
@@ -41,8 +42,8 @@ function paramValueText(def, v) {
 
 export class Panel {
   /**
-   * handlers: { onParam(key, value, live), onPreset(values), onPlayPause(), onReset(), onWindUp(),
-   *             onSpeed(x), onLabels(bool) }
+   * handlers: { onMachine(id), onParam(key, value, live), onPreset(values), onPlayPause(), onReset(),
+   *             onWindUp(), onSpeed(x), onLabels(bool) }
    */
   constructor(root, params, handlers) {
     this.root = root;
@@ -76,11 +77,28 @@ export class Panel {
     $('#btn-windup').addEventListener('click', () => handlers.onWindUp());
     $('#speed').addEventListener('change', (e) => handlers.onSpeed(Number(e.target.value)));
     $('#labels').addEventListener('change', (e) => handlers.onLabels(e.target.checked));
+    $('#machine-seg').addEventListener('click', (e) => {
+      const b = e.target.closest('button');
+      if (b && !b.classList.contains('on')) handlers.onMachine(b.dataset.machine);
+    });
+    this.setMachine(params.machine);
   }
 
+  setMachine(machine) {
+    for (const b of document.querySelectorAll('#machine-seg button')) {
+      const on = b.dataset.machine === machine;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    }
+    $('#machine-image').textContent = MACHINES[machine].image;
+  }
+
+  /** (Re)build the parameter controls for the current machine. */
   renderControls(params) {
     const host = $('#params');
-    const presetOptions = PRESETS.map((p) => `<option value="${p.id}">${p.label}</option>`).join('');
+    const machine = params.machine;
+    this.inputs = {};
+    const presetOptions = presetsFor(machine).map((p) => `<option value="${p.id}">${p.label}</option>`).join('');
     host.innerHTML = `
       <label class="preset">Preset
         <select id="preset">${presetOptions}<option value="custom" hidden>Custom</option></select>
@@ -90,6 +108,7 @@ export class Panel {
         <details class="group" ${g.id === 'weight' || g.id === 'vessel' ? 'open' : ''}>
           <summary>${g.title}</summary>
           ${g.params
+            .filter((p) => appliesTo(p, machine))
             .map((p) => {
               const tag = p.live ? '' : '<span class="tag" title="Changing this restarts the simulation">restarts</span>';
               const help = p.help ? `<div class="help">${p.help}</div>` : '';
@@ -106,7 +125,7 @@ export class Panel {
         </details>`
       ).join('')}`;
 
-    for (const def of PARAM_LIST) {
+    for (const def of PARAM_LIST.filter((d) => appliesTo(d, machine))) {
       if (def.type === 'choice') {
         const seg = host.querySelector(`.seg[data-key="${def.key}"]`);
         seg.addEventListener('click', (e) => {
@@ -130,7 +149,7 @@ export class Panel {
       }
     }
     $('#preset').addEventListener('change', (e) => {
-      const preset = PRESETS.find((p) => p.id === e.target.value);
+      const preset = presetsFor(machine).find((p) => p.id === e.target.value);
       if (preset) this.handlers.onPreset(preset.values);
     });
     this.setAll(params);
@@ -212,18 +231,27 @@ export class Panel {
     $('#bar-generated').style.flexGrow = Math.max(0, e.generated);
     $('#bar-lost').style.flexGrow = Math.max(0, e.lost);
     $('#ledger-bar').classList.toggle('empty', e.released <= 1e-6);
-    const losses = Object.entries(e.losses).sort((a, b) => b[1] - a[1]);
+    const losses = Object.entries(e.losses).filter(([, v]) => v !== 0).sort((a, b) => b[1] - a[1]);
     $('#loss-list').innerHTML = losses
       .map(([k, v]) => `<li><span>${LOSS_LABELS[k]}</span><span>${formatJ(v)}</span></li>`)
       .join('');
     const errPct = e.released > 1e-6 ? (100 * Math.abs(e.error)) / e.released : 0;
     $('#e-check').textContent =
       `Check: electricity + losses = released, to within ${errPct < 0.01 ? '0.01' : errPct.toFixed(2)}% (numerical error).`;
-    const net = e.generated - e.input;
-    $('#e-net').hidden = e.input <= 0;
+    // The machine starts pre-charged for free, so only count what came back after winding it up.
+    $('#e-net').hidden = r.cycles === 0;
     $('#e-net').innerHTML =
-      `After ${r.cycles} wind-up${r.cycles === 1 ? '' : 's'}: you put in <b>${formatJ(e.input)}</b> and got back ` +
-      `<b>${formatJ(e.generated)}</b> of electricity. Net: <b>${formatJ(net)}</b>.`;
+      `Since you first wound it up (${r.cycles}×): you put in <b>${formatJ(e.input)}</b> and got back ` +
+      `<b>${formatJ(e.generatedSinceWindUp)}</b> of electricity. Net: <b>${formatJ(e.generatedSinceWindUp - e.input)}</b>.`;
+
+    // Winding up is only offered once the machine has run down; doing it mid-run would
+    // hand back energy that was still stored and muddle the comparison above.
+    const stopped = !r.moving && r.stillTime > 1;
+    const wind = $('#btn-windup');
+    wind.disabled = !stopped;
+    wind.title = stopped
+      ? 'Lift the weight and pour the water back up by hand. The work this takes is booked in the energy ledger.'
+      : 'Available once the machine has stopped.';
 
     this.charts.flow.setData(history);
     this.charts.power.setData(history);

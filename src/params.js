@@ -1,7 +1,14 @@
-// Every adjustable parameter of the machine.
+// Every adjustable parameter of the two machines.
 // `live: true`  → applied immediately while the simulation runs.
 // `live: false` → changes stored energy or geometry, so the simulation resets
 //                 (otherwise a slider could inject energy and break the ledger).
+// `machines`    → which machines the parameter applies to (default: both).
+// `value`       → default; either a number/string, or { screw, pelton } when they differ.
+
+export const MACHINES = {
+  screw: { label: 'Screw turbine', image: '8A.jpg' },
+  pelton: { label: 'Pelton wheel', image: '1ojpg.jpg' },
+};
 
 export const PARAM_GROUPS = [
   {
@@ -37,7 +44,7 @@ export const PARAM_GROUPS = [
       { key: 'ltDiameter', label: 'Tank diameter', unit: 'm', min: 0.12, max: 0.4, step: 0.01, value: 0.2, live: false },
       { key: 'ltHeight', label: 'Tank height', unit: 'm', min: 0.3, max: 0.7, step: 0.01, value: 0.5, live: false },
       { key: 'ltDepth', label: 'Initial water under weight', unit: 'm', min: 0.05, max: 0.5, step: 0.01, value: 0.15, live: false },
-      { key: 'discharge', label: 'Turbine discharges', type: 'choice', value: 'onto', live: false,
+      { key: 'discharge', label: 'Turbine discharges', type: 'choice', value: 'onto', live: false, machines: ['screw'],
         options: [
           { value: 'onto', label: 'Onto the weight (as drawn)' },
           { value: 'under', label: 'Under the weight (piped in)' },
@@ -47,14 +54,20 @@ export const PARAM_GROUPS = [
   },
   {
     id: 'turbine',
-    title: 'Screw turbine & generator',
+    title: 'Turbine & generator',
     params: [
       { key: 'screwDisplacement', label: 'Screw displacement', unit: 'L/rev', min: 0.02, max: 0.5, step: 0.01, value: 0.08, live: true,
-        help: 'Water carried per revolution of the screw.' },
-      { key: 'leakage', label: 'Blade-gap leakage', unit: 'L/s per kPa', min: 0.0005, max: 0.05, step: 0.0005, value: 0.005, live: true, digits: 4 },
-      { key: 'genLoad', label: 'Generator load', unit: 'mN·m per rad/s', min: 0, max: 20, step: 0.1, value: 5, live: true,
+        machines: ['screw'], help: 'Water carried per revolution of the screw.' },
+      { key: 'leakage', label: 'Blade-gap leakage', unit: 'L/s per kPa', min: 0.0005, max: 0.05, step: 0.0005, value: 0.005, live: true,
+        digits: 4, machines: ['screw'] },
+      { key: 'nozzleDia', label: 'Nozzle diameter', unit: 'mm', min: 4, max: 20, step: 0.5, value: 8, live: true, machines: ['pelton'],
+        help: 'The jet that hits the buckets. Smaller = faster jet but less flow.' },
+      { key: 'wheelRadius', label: 'Wheel radius (to buckets)', unit: 'm', min: 0.04, max: 0.09, step: 0.005, value: 0.06, live: false,
+        machines: ['pelton'] },
+      { key: 'genLoad', label: 'Generator load', unit: 'mN·m per rad/s', min: 0, max: 20, step: 0.1, value: { screw: 5, pelton: 1 }, live: true,
         help: 'Electrical braking torque per unit speed. 0 = generator disconnected.' },
-      { key: 'bearingFriction', label: 'Bearing & gear friction', unit: 'mN·m per rad/s', min: 0, max: 2, step: 0.01, value: 0.2, live: true },
+      { key: 'bearingFriction', label: 'Bearing & gear friction', unit: 'mN·m per rad/s', min: 0, max: 2, step: 0.01,
+        value: { screw: 0.2, pelton: 0.1 }, live: true },
     ],
   },
   {
@@ -73,17 +86,25 @@ export const PARAM_GROUPS = [
 
 export const PARAM_LIST = PARAM_GROUPS.flatMap((g) => g.params);
 
-export function defaultParams() {
-  return Object.fromEntries(PARAM_LIST.map((p) => [p.key, p.value]));
+export const appliesTo = (def, machine) => !def.machines || def.machines.includes(machine);
+
+export function defaultParams(machine = 'screw') {
+  const p = { machine };
+  for (const def of PARAM_LIST) {
+    p[def.key] = typeof def.value === 'object' ? def.value[machine] : def.value;
+  }
+  return p;
 }
 
 export const PRESETS = [
   { id: 'default', label: 'As drawn (default)', values: {} },
   { id: 'light', label: 'Weight too light (25 kg, vented)', values: { pistonMass: 25, lid: 'vented' } },
   { id: 'vented', label: 'Vented big vessel', values: { lid: 'vented' } },
-  { id: 'under', label: 'Discharge under the weight', values: { discharge: 'under' } },
+  { id: 'under', label: 'Discharge under the weight', values: { discharge: 'under' }, machines: ['screw'] },
   { id: 'nogen', label: 'Generator disconnected', values: { genLoad: 0 } },
   { id: 'ideal', label: 'Near-frictionless parts', values: {
     sealFriction: 0, frictionFactor: 0, valveK: 0, valveCrack: 0, leakage: 0.0005, bearingFriction: 0 } },
   { id: 'heavy', label: 'Heavy weight, tall tank', values: { pistonMass: 140, ltHeight: 0.7, ltDepth: 0.4, bvHeight: 0.6, bvFill: 20 } },
 ];
+
+export const presetsFor = (machine) => PRESETS.filter((p) => !p.machines || p.machines.includes(machine));

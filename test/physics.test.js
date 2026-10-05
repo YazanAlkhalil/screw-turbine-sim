@@ -1,7 +1,7 @@
 // Runs every preset headless and checks the physics is honest:
 // the energy ledger balances, nothing is generated from nothing, and the machine stops.
 import { Simulation } from '../src/physics.js';
-import { defaultParams, PRESETS } from '../src/params.js';
+import { defaultParams, MACHINES, presetsFor } from '../src/params.js';
 
 let failed = 0;
 const check = (ok, msg) => {
@@ -9,9 +9,10 @@ const check = (ok, msg) => {
   console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${msg}`);
 };
 
-for (const preset of PRESETS) {
-  const sim = new Simulation({ ...defaultParams(), ...preset.values });
-  console.log(`\n${preset.label}`);
+for (const machine of Object.keys(MACHINES))
+for (const preset of presetsFor(machine)) {
+  const sim = new Simulation({ ...defaultParams(machine), ...preset.values });
+  console.log(`\n[${machine}] ${preset.label}`);
   if (sim.notes.length) console.log('  note:', sim.notes.join(' '));
   let stopAt = null;
   const marks = [1, 5, 10, 20, 40, 80, 160];
@@ -40,7 +41,7 @@ for (const preset of PRESETS) {
   sim.windUp();
   for (let i = 0; i < 6000 && sim.readouts().stillTime < 3; i++) sim.advance(0.05);
   const e2 = sim.energySummary();
-  check(e2.generated < e2.input + e.released, `after winding up (cost ${e2.input.toFixed(2)} J) total generated ${e2.generated.toFixed(2)} J`);
+  check(e2.generatedSinceWindUp < e2.input, `winding up costs ${e2.input.toFixed(2)} J, gives back ${e2.generatedSinceWindUp.toFixed(2)} J`);
   check(Math.abs(e2.error) <= 0.01 * Math.max(1, e2.released), `ledger still balances after wind-up (error ${e2.error.toFixed(4)} J)`);
 }
 

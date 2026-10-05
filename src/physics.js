@@ -1,9 +1,10 @@
-// Lumped-parameter hydraulic model of the screw-turbine closed loop.
+// Lumped-parameter hydraulic model of the closed-loop machine, in two variants:
+//   screw  – big vessel → screw turbine (full pipe) → lower tank
+//   pelton – big vessel → nozzle → free jet onto a Pelton wheel in a vented casing → drains to lower tank
+// and in both: under the weight → one-way valves → up to the big vessel.
 //
-// Two rigid water columns (1-D unsteady Bernoulli, pipes assumed full):
-//   turbine line: big vessel → screw turbine → lower tank
-//   return line : under the weight → foot valve + one-way valve → over the top → big vessel
-// coupled to a rotor (screw + gears + generator) and to three free-surface volumes
+// Two rigid water columns (1-D unsteady Bernoulli, pipes assumed full) coupled to a
+// rotor (turbine + gears + generator) and to three free-surface volumes
 // (big vessel, water under the weight, water on top of the weight).
 //
 // Nothing is scripted: water moves only where pressure and gravity push it.
@@ -22,6 +23,8 @@ const V_EPS = 0.002; // m/s, smoothing width of the seal's Coulomb friction
 const K_ENTRY = 0.5;
 const K_BEND = 0.3;
 const K_EXIT = 1.0;
+const K_NOZZLE = 0.05; // contraction loss of the Pelton nozzle
+const BUCKET_FACTOR = 1.8; // 1 + k·cos(180° − deflection): ideal 2, real Pelton buckets ≈ 1.8
 const FLOW_EPS = 2e-6; // m³/s (0.12 L/min) – below this a line counts as stopped
 const SPIN_EPS = 0.1; // rad/s
 
@@ -61,7 +64,12 @@ export class Simulation {
     this.pCrack = p.valveCrack * 1000; // Pa
     this.kTpipe = (p.frictionFactor * L.lengths.turbine) / (2 * L.rT) + K_ENTRY + K_BEND * L.bends.turbine;
     this.kRpipe = (p.frictionFactor * L.lengths.ret) / (2 * L.rR) + K_ENTRY + K_BEND * L.bends.ret;
-    this.kRvalve = 2 * p.valveK; // foot valve + one-way valve
+    this.kRvalve = 2 * p.valveK; // screw: foot valve + one-way valve · pelton: two one-way valves
+    this.pelton = p.machine === 'pelton';
+    if (this.pelton) {
+      this.AN = Math.PI * (p.nozzleDia / 2000) ** 2;
+      this.kTpipe += K_NOZZLE;
+    }
   }
 
   initialVolumes() {
@@ -90,7 +98,7 @@ export class Simulation {
     this.s = { VB, VLB, VLA: 0, QT: 0, QR: 0, w: 0, theta: 0, vP: 0, t: 0 };
     this.Vair0 = this.capB - VB;
     this.E0 = this.storedEnergy();
-    this.ledger = { input: 0, generated: 0, pipe: 0, valves: 0, leakage: 0, bearing: 0, seal: 0, splash: 0, transient: 0 };
+    this.ledger = { input: 0, generated: 0, pipe: 0, valves: 0, leakage: 0, jet: 0, bearing: 0, seal: 0, splash: 0, transient: 0 };
     this.cycles = 0;
     this.stillTime = 0;
     this.history = [];
@@ -131,7 +139,7 @@ export class Simulation {
     const s = this.s;
     const L = this.layout;
     const p = this.params;
-    const onto = p.discharge !== 'under';
+    const onto = this.pelton || p.discharge !== 'under';
     const hB = s.VB / this.AB;
     const hLB = s.VLB / this.AL;
     const hLA = s.VLA / this.AL;
@@ -143,38 +151,67 @@ export class Simulation {
     const pBelow = (p.pistonMass * G + RHO * G * s.VLA + fr) / this.AL; // gauge, just under the weight
     const headLB = pBelow + RHO * G * yP; // piezometric head of the water under the weight (Pa)
 
-    // ---- Turbine line, implicitly coupled to the rotor --------------------------------
-    // Screw = positive-displacement machine with leakage:
-    //   flow Q = d·ω + Gl·Δp ;  torque on rotor = d·Δp
-    const DT = onto ? pA + RHO * G * (zBs - L.zOut) : pA + RHO * G * zBs - headLB;
     const ATT = 2 * this.AT * this.AT;
     const ARR = 2 * this.AR * this.AR;
     const aQT = Math.abs(s.QT);
     const aQR = Math.abs(s.QR);
-    const RT = (RHO * (this.kTpipe + K_EXIT) * aQT) / ATT;
     const J = ROTOR_INERTIA;
-    const d = this.d;
-    const Gl = this.Gl;
-    const a11 = this.IT / dt + RT + 1 / Gl;
-    const a12 = -d / Gl;
-    const a22 = J / dt + (d * d) / Gl + this.bBear + this.cGen;
-    const b1 = (this.IT * s.QT) / dt + DT;
-    const b2 = (J * s.w) / dt;
-    const det = a11 * a22 - a12 * a12;
-    let QT = (b1 * a22 - a12 * b2) / det;
-    let w = (a11 * b2 - a12 * b1) / det;
-    // A free outfall can't run backwards; nothing can be drawn from an empty vessel;
-    // backflow can't take water the weight is already resting on its stops over.
-    const QTmax = s.VB / dt;
-    const QTmin = onto ? 0 : -Math.max(0, s.VLB - this.Vstop) / dt;
-    if (QT > QTmax || QT < QTmin) {
-      QT = Math.min(QTmax, Math.max(QTmin, QT));
-      w = (b2 + (d * QT) / Gl) / a22;
+    const lg = this.ledger;
+    let QT;
+    let w;
+    let fallFrom; // height turbine water falls from onto the weight ("onto" discharge)
+
+    if (this.pelton) {
+      // ---- Pelton: nozzle line → free jet; the wheel can't push back on the nozzle --------
+      // The jet leaves at air pressure with speed vj = Q/A_nozzle (its kinetic energy is the
+      // nozzle's "exit loss"); the buckets take torque ρ·Q·(vj − u)·k·r, u = ω·r.
+      const DT = pA + RHO * G * (zBs - L.zNozzle);
+      const AN2 = 2 * this.AN * this.AN;
+      const RT = RHO * aQT * (this.kTpipe / ATT + 1 / AN2);
+      QT = ((this.IT * s.QT) / dt + DT) / (this.IT / dt + RT);
+      QT = Math.min(s.VB / dt, Math.max(0, QT));
+      const vj = QT / this.AN;
+      const r = L.rPitch;
+      const k = BUCKET_FACTOR * RHO * r * QT; // torque = k·(vj − ω·r)
+      w = ((J * s.w) / dt + k * vj) / (J / dt + k * r + this.bBear + this.cGen);
+      const pWheel = k * (vj - w * r) * w;
+      lg.jet += ((RHO * aQT * QT * QT) / AN2 - pWheel) * dt; // jet energy the buckets didn't capture
+      lg.pipe += ((RHO * this.kTpipe * aQT) / ATT) * QT * QT * dt;
+      fallFrom = L.zNozzle;
+    } else {
+      // ---- Screw: full pipe, implicitly coupled to the rotor ----------------------------
+      // Positive-displacement machine with leakage: flow Q = d·ω + Gl·Δp ; torque = d·Δp
+      const DT = onto ? pA + RHO * G * (zBs - L.zOut) : pA + RHO * G * zBs - headLB;
+      const RT = (RHO * (this.kTpipe + K_EXIT) * aQT) / ATT;
+      const d = this.d;
+      const Gl = this.Gl;
+      const a11 = this.IT / dt + RT + 1 / Gl;
+      const a12 = -d / Gl;
+      const a22 = J / dt + (d * d) / Gl + this.bBear + this.cGen;
+      const b1 = (this.IT * s.QT) / dt + DT;
+      const b2 = (J * s.w) / dt;
+      const det = a11 * a22 - a12 * a12;
+      QT = (b1 * a22 - a12 * b2) / det;
+      w = (a11 * b2 - a12 * b1) / det;
+      // A free outfall can't run backwards; nothing can be drawn from an empty vessel;
+      // backflow can't take water the weight is already resting on its stops over.
+      const QTmax = s.VB / dt;
+      const QTmin = onto ? 0 : -Math.max(0, s.VLB - this.Vstop) / dt;
+      if (QT > QTmax || QT < QTmin) {
+        QT = Math.min(QTmax, Math.max(QTmin, QT));
+        w = (b2 + (d * QT) / Gl) / a22;
+      }
+      lg.leakage += (((QT - d * w) ** 2) / Gl) * dt;
+      lg.pipe += ((RHO * this.kTpipe * aQT) / ATT) * QT * QT * dt;
+      lg.splash += ((RHO * K_EXIT * aQT) / ATT) * QT * QT * dt;
+      fallFrom = L.zOut;
     }
 
     // ---- Return line ------------------------------------------------------------------
-    // Must lift water over the top of the arch (zPeak) into the vessel's air space.
-    const DR = headLB - pA - RHO * G * L.zPeak - this.pCrack;
+    // Must lift water over the top of the pipe (zPeak) into the vessel's air space,
+    // or up to the vessel's water surface if that has risen above the inlet.
+    const zLift = Math.max(L.zPeak, zBs);
+    const DR = headLB - pA - RHO * G * zLift - this.pCrack;
     const RR = (RHO * (this.kRpipe + this.kRvalve + K_EXIT) * aQR) / ARR;
     let QR = ((this.IR * s.QR) / dt + DR) / (this.IR / dt + RR);
     const avail = s.VLB - this.Vstop + (onto ? 0 : QT * dt); // what the weight can still push out
@@ -184,18 +221,15 @@ export class Simulation {
     const vP = dVLB / dt / this.AL;
 
     // ---- Energy ledger (every loss is computed explicitly, not as a remainder) --------
-    const lg = this.ledger;
     lg.generated += this.cGen * w * w * dt;
     lg.bearing += this.bBear * w * w * dt;
-    lg.leakage += (((QT - d * w) ** 2) / Gl) * dt;
-    lg.pipe += ((RHO * this.kTpipe * aQT) / ATT) * QT * QT * dt + ((RHO * this.kRpipe * aQR) / ARR) * QR * QR * dt;
+    lg.pipe += ((RHO * this.kRpipe * aQR) / ARR) * QR * QR * dt;
     lg.valves += (this.pCrack * QR + ((RHO * this.kRvalve * aQR) / ARR) * QR * QR) * dt;
     lg.seal += fr * vP * dt;
     lg.splash +=
-      ((RHO * K_EXIT * aQT) / ATT) * QT * QT * dt +
       ((RHO * K_EXIT * aQR) / ARR) * QR * QR * dt +
-      RHO * G * (L.zPeak - zBs) * QR * dt + // falls from the top of the arch into the vessel
-      (onto ? RHO * G * (L.zOut - zLAs) * QT * dt : 0); // falls from the spout onto the weight
+      RHO * G * (zLift - zBs) * QR * dt + // falls from the top of the return pipe into the vessel
+      (onto ? RHO * G * (fallFrom - zLAs) * QT * dt : 0); // falls from the turbine onto the weight
     lg.transient += 0.5 * this.IT * (QT - s.QT) ** 2 + 0.5 * this.IR * (QR - s.QR) ** 2 + 0.5 * J * (w - s.w) ** 2;
 
     s.VB = Math.max(0, s.VB + (QR - QT) * dt);
@@ -227,6 +261,9 @@ export class Simulation {
 
   /** Lift the weight and pour the water back up by hand, and book the work that takes. */
   windUp() {
+    // The machine starts pre-charged for free, so "what you got back for your work"
+    // only counts electricity generated after the first wind-up.
+    if (this.cycles === 0) this.generatedBeforeWindUp = this.ledger.generated;
     const before = this.storedEnergy();
     Object.assign(this.s, { VB: this.init.VB, VLB: this.init.VLB, VLA: 0, QT: 0, QR: 0, w: 0, vP: 0 });
     this.ledger.input += this.storedEnergy() - before;
@@ -241,13 +278,22 @@ export class Simulation {
       pipe: lg.pipe,
       valves: lg.valves,
       leakage: lg.leakage,
+      jet: lg.jet,
       bearing: lg.bearing,
       seal: lg.seal,
       splash: lg.splash,
       transient: lg.transient,
     };
     const lost = Object.values(losses).reduce((a, b) => a + b, 0);
-    return { released, input: lg.input, generated: lg.generated, losses, lost, error: released - lg.generated - lost };
+    return {
+      released,
+      input: lg.input,
+      generated: lg.generated,
+      generatedSinceWindUp: this.cycles ? lg.generated - this.generatedBeforeWindUp : 0,
+      losses,
+      lost,
+      error: released - lg.generated - lost,
+    };
   }
 
   record() {
@@ -286,7 +332,8 @@ export class Simulation {
     const pTap = pA + RHO * G * (zBs - L.tapY) - (0.5 * RHO * this.kTpipe * s.QT * Math.abs(s.QT)) / (2 * this.AT * this.AT);
     return {
       t: s.t,
-      onto: p.discharge !== 'under',
+      machine: p.machine,
+      onto: this.pelton || p.discharge !== 'under',
       sealed: p.lid === 'sealed',
       flowTurbine: s.QT * 60000, // L/min
       flowReturn: s.QR * 60000,
@@ -304,7 +351,9 @@ export class Simulation {
       pushNeeded,
       atStops: s.VLB <= this.Vstop + 1e-8,
       vesselEmpty: s.VB < 2e-5,
-      piezoLevel: Math.min(L.ventLength, Math.max(0, pTap / (RHO * G))),
+      // the Pelton casing is vented, so its tube is just an air vent
+      piezoLevel: this.pelton ? 0 : Math.min(L.ventLength, Math.max(0, pTap / (RHO * G))),
+      jetSpeed: this.pelton ? s.QT / this.AN : 0, // m/s
       moving: this.isMoving(),
       stillTime: this.stillTime,
       cycles: this.cycles,

@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Screw Turbine Loop</title>
+    <title>Water Loop Simulator</title>
   </head>
   <body>
     <div id="app">
@@ -11,15 +11,20 @@
         <div id="scene"></div>
         <div class="hud hud-top">
           <div class="title-card">
-            <h1>Screw-turbine closed loop</h1>
-            <p>Physics simulation of the design in <code>8A.jpg</code>. Nothing is scripted: water moves only where pressure and gravity push it.</p>
+            <h1>Closed-loop water machine</h1>
+            <div class="seg machine-seg" id="machine-seg" role="group" aria-label="Turbine">
+              <button type="button" data-machine="screw">Screw turbine</button>
+              <button type="button" data-machine="pelton">Pelton wheel</button>
+            </div>
+            <p>Physics simulation of the design in <code id="machine-image">8A.jpg</code>. Nothing is scripted: water moves only where pressure and gravity push it.</p>
+            <a id="btn-download" class="download" href="./water-loop-simulation.html" download="water-loop-simulation.html">Download offline copy</a>
           </div>
         </div>
         <div class="hud hud-bottom">
           <div class="transport">
             <button id="btn-play" class="primary" aria-pressed="true">Pause</button>
             <button id="btn-reset">Reset</button>
-            <button id="btn-windup" title="Lift the weight and pour the water back up by hand. The work this takes is booked in the energy ledger.">Wind it back up</button>
+            <button id="btn-windup" disabled title="Available once the machine has stopped.">Wind it back up</button>
             <label>Speed
               <select id="speed">
                 <option value="0.25">0.25×</option>
@@ -94,6 +99,7 @@
             <ul>
               <li>Each pipe is a column of water following the unsteady Bernoulli equation: pressure, gravity, the water's inertia, and pipe friction.</li>
               <li>The screw turbine carries a fixed volume of water per turn, plus some leakage past the blades. The pressure drop across it is what turns the shaft.</li>
+              <li>The Pelton wheel is driven by a free jet: the nozzle turns the water's height into speed, and each bucket takes momentum from the jet. Its torque is ρ·Q·(jet speed − bucket speed)·1.8·r, so it can capture at most 90% of the jet's energy, and only when the buckets move at half the jet's speed. Its casing must stay at air pressure, so the water then drains to the lower tank by gravity.</li>
               <li>The generator brakes the shaft with a torque proportional to speed. The braking power is the electricity.</li>
               <li>The weight is a sealed piston. It adds its weight ÷ area to the pressure of the water underneath. Water that lands on top of it adds to that weight.</li>
               <li>A sealed big vessel traps air that obeys Boyle's law (pressure × volume stays constant). When its pressure drops below the outside air, that is the "partial vacuum" from the docs.</li>
